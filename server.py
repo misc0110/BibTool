@@ -322,7 +322,7 @@ def webhook():
 
 @app.route("/v1/version", methods=["GET"])
 def version():
-    return jsonify({"version": 8, "url": "client.py"})
+    return jsonify({"version": 9, "url": "client.py"})
 
 
 if __name__ == "__main__":
