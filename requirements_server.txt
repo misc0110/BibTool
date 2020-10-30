@@ -1,0 +1,4 @@
+flask
+python-Levenshtein
+bibtexparser
+GitPython
