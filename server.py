@@ -6,30 +6,32 @@ import git
 import json
 import sys
 
+VERSION = 10
+
 app = Flask(__name__)
 tokens = True
 no_commit = False
 
 token_db = {
-  "test": {"search": True, "read": True, "write": True, "delete": True}   
+  "test": {"search": True, "read": True, "write": True, "delete": True}
 }
 
 def check_token(token, operation):
     if not tokens:
         return True
-    
+
     if not token in token_db:
         return False
     if not operation in token_db[token]:
         return False
     return token_db[token][operation]
-    
+
 
 def entry_to_bibtex(entry):
     newdb = bibtexparser.bibdatabase.BibDatabase()
     newdb.entries = [ entry ]
     return bibtexparser.dumps(newdb)
-    
+
 
 def get_duplicates(entry):
     dups = []
@@ -46,8 +48,8 @@ def get_duplicates(entry):
         if (exact and sorted(e.keys()) != sorted(entry.keys())) or ((dist < max(5, length * 0.1) or exact) and dist > 0):
             dups.append((dist, entry["ID"], e))
     return dups
-        
-        
+
+
 def entry_by_key(key):
     for entry in bib_database.entries:
         if entry["ID"] == key:
@@ -114,11 +116,11 @@ def get_bibfile():
         return "Invalid request"
     if not check_token(request.json["token"], "read"):
         return "Access denied!"
-    
+
     bib = ""
     for entry in request.json["entries"]:
         bib += entry_to_bibtex(entry_by_key(entry)) + "\n"
-        
+
     return bib
 
 
@@ -128,11 +130,11 @@ def get_bibfile_as_json():
         return "Invalid request"
     if not check_token(request.json["token"], "read"):
         return jsonify({"success": False, "reason": "access_denied", "message": "Your token does not grant read access."})
-    
+
     bib = []
     for entry in request.json["entries"]:
         bib.append(entry_by_key(entry))
-        
+
     return jsonify(bib)
 
 
@@ -141,7 +143,7 @@ def get_bibfile_as_json():
 def suggest_entry(key, token):
     if not check_token(token, "search"):
         return jsonify({"success": False, "reason": "access_denied"})
-    
+
     entry = entry_by_key(key)
     if not entry:
         entries = []
@@ -150,7 +152,7 @@ def suggest_entry(key, token):
             if key.lower() in entry["ID"].lower() or dist == 0:
                 entries.append((1, entry))
                 continue
-            if dist < 5: 
+            if dist < 5:
                 entries.append((1-dist/100.0, entry))
                 continue
             common_prefix = 0
@@ -162,7 +164,7 @@ def suggest_entry(key, token):
                 entries.append((common_prefix/float(max(len(entry["ID"]), len(key))), entry))
     else:
         entries = [ (1, entry) ]
-    
+
     top = sorted(entries, key=lambda x: x[0], reverse=True)
     return jsonify({"success": True, "entries": top[:5]})
 
@@ -172,7 +174,7 @@ def suggest_entry(key, token):
 def search_entry(query, token):
     if not check_token(token, "search"):
         return "Access denied!"
-    
+
     query_parts = query.split(" ")
     for q in query_parts:
         if len(q) < 3:
@@ -190,7 +192,7 @@ def search_entry(query, token):
         if was_found:
             entries.append((entry_to_bibtex(entry)))
     return "\n".join(list(set(entries)))
-        
+
 
 @app.route("/v1/entry/<string:key>", methods=["POST"])
 def add_entry(key):
@@ -198,14 +200,14 @@ def add_entry(key):
         return jsonify({"success": False, "reason": "missing_entry"})
     if not check_token(request.json["token"], "write"):
         return jsonify({"success": False, "reason": "access_denied", "message": "Your token does not allow adding new bibliography entries."})
-    
+
     if "ID" not in request.json["entry"]:
         request.json["entry"]["ID"] = key
-    
+
     existing = entry_by_key(request.json["entry"]["ID"])
     if existing:
         return jsonify({"success": False, "reason": "exists", "entry": existing})
-    
+
     bib_database.entries.append(request.json["entry"])
     save_bib("Added %s" % request.json["entry"]["ID"], request.json["token"])
     return jsonify({"success": True})
@@ -217,30 +219,30 @@ def replace_entry(key):
         return jsonify({"success": False, "reason": "missing_entry"})
     if not check_token(request.json["token"], "write"):
         return jsonify({"success": False, "reason": "access_denied", "message": "Your token does not allow changing bibliography entries."})
-    
+
     for (idx, entry) in enumerate(bib_database.entries):
         if entry["ID"] == key:
             bib_database.entries[idx] = request.json["entry"]
             save_bib("Changed %s" % key, request.json["token"])
             return jsonify({"success": True})
-        
+
     return jsonify({"success": False, "reason": "not_found"})
-    
-    
+
+
 @app.route("/v1/entry/<string:key>", defaults={"token": None}, methods=["DELETE"])
 @app.route("/v1/entry/<string:key>/<string:token>", methods=["DELETE"])
 def remove_entry(key, token):
     if not check_token(token, "delete"):
         return jsonify({"success": False, "reasons": "access_denied", "message": "Your token does not allow deleting bibliography entries."})
-    
+
     for (idx, entry) in enumerate(bib_database.entries):
         if entry["ID"] == key:
             del bib_database.entries[idx]
             save_bib("Deleted %s" % key, token)
             return jsonify({"success": True})
-        
+
     return jsonify({"success": False, "reason": "not_found"})
-    
+
 
 @app.route("/v1/update", methods=["POST"])
 def add_entries():
@@ -248,7 +250,7 @@ def add_entries():
         return jsonify({"success": False, "reason": "missing_entry"})
     if not check_token(request.json["token"], "write"):
         return jsonify({"success": False, "reason": "access_denied", "message": "Your token does not allow modifying the bibliography. Remove the bib file to get a fresh one from the server"})
-    
+
     dups = []
     changes = False
     changelog = []
@@ -272,7 +274,7 @@ def add_entries():
 
     if len(dups) > 0:
         return jsonify({"success": False, "reason": "duplicate", "entries": dups})
-        
+
     return jsonify({"success": True})
 
 
@@ -290,13 +292,13 @@ def sync():
 
     with open(repo_path + "/" + repo_name) as bibtex_file:
         bib_database = bibtexparser.load(bibtex_file, parser)
-        
+
     try:
         with open(repo_path + "/tokens.json") as tokens:
             token_db = json.load(tokens)
     except:
         tokens = False
-    
+
     return "Synced!"
 
 
@@ -304,7 +306,7 @@ def sync():
 def webhook():
     if not request.json or not "commits" in request.json:
         return jsonify({"success": False, "reason": "missing_entry"})
-    
+
     was_internal = True
     for commit in request.json["commits"]:
         if "title" in commit and "[BibTool]" not in commit["title"]:
@@ -313,21 +315,21 @@ def webhook():
         if "message" in commit and "[BibTool]" not in commit["message"]:
             was_internal = False
             break
-    
-    if not was_internal:    
+
+    if not was_internal:
         return sync()
     else:
         return "OK"
-    
+
 
 @app.route("/v1/version", methods=["GET"])
 def version():
-    return jsonify({"version": 9, "url": "client.py"})
+    return jsonify({"version": VERSION, "url": "client.py"})
 
 
 if __name__ == "__main__":
     global repo_path, repo_name
-    
+
     if len(sys.argv) < 3:
         print("Usage: %s <repo path> <bib filename>" % sys.argv[0])
         sys.exit(1)
@@ -335,5 +337,5 @@ if __name__ == "__main__":
     repo_name = sys.argv[2]
 
     sync()
-        
+
     app.run(debug=False, host='0.0.0.0')
