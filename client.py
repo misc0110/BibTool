@@ -46,8 +46,8 @@ def get_keys(filename, import_base=None):
     for key in cites:
         keys |= set(key.split(","))
 
-    # find inputs and recursively parse them
-    inputs = re.findall("\\\\input\\{([^\\}]+)\\}", content)
+    # find inputs/include and recursively parse them
+    inputs = re.findall("\\\\(?:input|include)\\{([^\\}]+)\\}", content)
     for f in inputs:
         if import_base is not None:
             f = os.path.join(import_base, f)
