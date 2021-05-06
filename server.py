@@ -6,7 +6,7 @@ import git
 import json
 import sys
 
-VERSION = 10
+VERSION = 11
 
 app = Flask(__name__)
 tokens = True
