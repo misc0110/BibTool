@@ -52,7 +52,9 @@ def get_duplicates(entry):
 
 def entry_by_key(key):
     for entry in bib_database.entries:
-        if entry["ID"] == key:
+        if entry["ID"].startswith(key):
+            return entry
+        if key.startswith(entry["ID"]):
             return entry
     return None
 
