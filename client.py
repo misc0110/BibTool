@@ -17,7 +17,7 @@ parser = argparse.ArgumentParser(description='BibTool')
 parser.add_argument("--token", dest="token", action="store", default="", help="Provide access token via command line")
 parser.add_argument("--tokenfile", dest="token_file", action="store", default="token", help="File containing the access token")
 parser.add_argument("--server", dest="server", action="store", default="", required=True, help="BibTool server")
-parser.add_argument("--tex", dest="tex", action="store", default="main.tex", help="BibTool server")
+parser.add_argument("--tex", dest="tex", action="store", default="main.tex", help="LaTeX file")
 parser.add_argument("--query", dest="query", action="store", default="", help="Query to search for (if action is search)")
 parser.add_argument("action")
 
@@ -193,7 +193,10 @@ def save_bib():
 def show_error(obj):
     if "reason" in obj:
         if obj["reason"] == "access_denied":
-            print("[!] Access denied! Your token is not valid for this operation. Verify whether the file '%s' contains a valid token." % args.token_file)
+            print("\u001b[31m[!] Access denied!\u001b[0m Your token is not valid for this operation. Verify whether the file '%s' contains a valid token." % args.token_file)
+        elif obj["reason"] == "policy":
+            for entry in obj["entries"]:
+                print("\u001b[31m[!] Server policy rejected entry %s\u001b[0m. Reason: %s" % (entry["ID"], entry["reason"]))
 
 
 action = args.action

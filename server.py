@@ -5,6 +5,7 @@ import Levenshtein
 import git
 import json
 import sys
+import importlib
 
 VERSION = 10
 
@@ -67,8 +68,10 @@ def save_bib(commit_message = None, token = None):
         msg = "[BibTool] %s" % msg
         repo.index.add(repo_path + "/" + repo_name)
         repo.index.commit(msg)
-        repo.remotes.origin.push()
-
+        try:
+            repo.remotes.origin.push()
+        except:
+            print("Warning: could not push to repository")
 
 def entry_is_same(e1, e2):
     if set(e1.keys()) != set(e2.keys()):
@@ -208,6 +211,13 @@ def add_entry(key):
     if existing:
         return jsonify({"success": False, "reason": "exists", "entry": existing})
 
+    if policy:
+        accept, reason = policy.check(request.json["entry"], bib_database.entries)
+        if not accept:
+            entry = request.json["entry"]
+            entry["reason"] = reason
+            return jsonify({"success": False, "reason": "policy", "entries": [entry]})
+
     bib_database.entries.append(request.json["entry"])
     save_bib("Added %s" % request.json["entry"]["ID"], request.json["token"])
     return jsonify({"success": True})
@@ -254,6 +264,7 @@ def add_entries():
     dups = []
     changes = False
     changelog = []
+    rejects = []
     for entry in request.json["entries"]:
         existing = entry_by_key(entry["ID"])
         if existing and entry_is_same(existing, entry):
@@ -263,6 +274,13 @@ def add_entries():
         if len(dup) == 0:
             # new entry, add
             if not entry_by_key(entry["ID"]):
+                if policy:
+                    accept, reason = policy.check(entry, bib_database.entries)
+                    if not accept:
+                        entry["reason"] = reason
+                        rejects.append(entry)
+                        print("Rejecting entry %s" % entry["ID"])
+                        continue
                 bib_database.entries.append(entry)
                 changelog.append("Added %s" % entry["ID"])
                 changes = True
@@ -271,6 +289,9 @@ def add_entries():
 
     if changes:
         save_bib("\n".join(changelog), request.json["token"])
+
+    if len(rejects) > 0:
+        return jsonify({"success": False, "reason": "policy", "entries": rejects})
 
     if len(dups) > 0:
         return jsonify({"success": False, "reason": "duplicate", "entries": dups})
@@ -287,11 +308,20 @@ def sync():
     parser.homogenize_fields = True
 
     repo = git.Repo(repo_path)
-    origin = repo.remotes.origin
-    origin.pull()
+    try:
+        origin = repo.remotes.origin
+        origin.pull()
+    except:
+        print("Warning: could not pull from repository")
 
     with open(repo_path + "/" + repo_name) as bibtex_file:
         bib_database = bibtexparser.load(bibtex_file, parser)
+
+    for e in bib_database.entries:
+        if policy:
+            accept, reason = policy.check(e, bib_database.entries)
+            if not accept:
+                print("Reject %s: %s" % (e["ID"], reason))
 
     try:
         with open(repo_path + "/tokens.json") as tokens:
@@ -328,13 +358,18 @@ def version():
 
 
 if __name__ == "__main__":
-    global repo_path, repo_name
+    global repo_path, repo_name, policy
 
     if len(sys.argv) < 3:
-        print("Usage: %s <repo path> <bib filename>" % sys.argv[0])
+        print("Usage: %s <repo path> <bib filename> [<policy>]" % sys.argv[0])
         sys.exit(1)
     repo_path = sys.argv[1]
     repo_name = sys.argv[2]
+    if len(sys.argv) > 3:
+        print("Import policy %s" % sys.argv[3])
+        policy = importlib.import_module(sys.argv[3])
+    else:
+        policy = None
 
     sync()
 
