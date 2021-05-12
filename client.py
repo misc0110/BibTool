@@ -9,7 +9,7 @@ import difflib
 import os
 import argparse
 
-version = 10
+version = 11
 
 limit_traffic = True
 
@@ -35,7 +35,7 @@ else:
 fname = args.tex
 server = args.server
 if server[-1] != '/': server += "/"
-if not server.endswith("/v1/"): server += "/v1/"
+if not server.endswith("/v1/"): server += "v1/"
 
 def get_keys(filename, import_base=None):
     content = open(filename).read()
@@ -197,7 +197,11 @@ def show_error(obj):
         elif obj["reason"] == "policy":
             for entry in obj["entries"]:
                 print("\u001b[31m[!] Server policy rejected entry %s\u001b[0m. Reason: %s" % (entry["ID"], entry["reason"]))
-
+        else:
+            print("\u001b[31m[!] Unhandled error occurred!\u001b[0m Reason (%s) %s" % (obj["reason"], obj["message"] if "message" in obj else ""))
+    else:
+        print("\u001b[31m[!] Unknown error occurred!\u001b[0m")
+    sys.exit(1)
 
 action = args.action
 
@@ -218,7 +222,12 @@ else:
         sys.exit(1)
 
 response = requests.get(server + "version")
-version_info = response.json()
+try:
+    version_info = response.json()
+except:
+    print("\u001b[31m[!] Could not get version info from server.\u001b[0m Is the server URL \"%s\" correct?" % server)
+    sys.exit(1)
+
 if version_info["version"] > version:
     print("[!] New version available, updating...")
     script = requests.get(server + version_info["url"])

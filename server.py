@@ -7,7 +7,7 @@ import json
 import sys
 import importlib
 
-VERSION = 10
+VERSION = 11
 
 app = Flask(__name__)
 tokens = True
@@ -19,14 +19,20 @@ token_db = {
 
 def check_token(token, operation):
     if not tokens:
-        return True
+        return (True, None)
+
+    if len(token_db) == 0:
+        return (False, {"success": False, "reason": "server_problem", "message": "The token database on the server seems to be corrupted, please inform your BibTool administrator."})
 
     if not token in token_db:
-        return False
+        return (False, {"success": False, "reason": "access_denied", "message": "Invalid token. Check your 'token' file."})
     if not operation in token_db[token]:
-        return False
-    return token_db[token][operation]
-
+        return (False, {"success": False, "reason": "access_denied", "message": "Your token does not grant %s access." % operation})
+    ok = token_db[token][operation]
+    if not ok:
+        return (False, {"success": False, "reason": "access_denied", "message": "Your token does not grant %s access." % operation})
+    else:
+        return (True, None)
 
 def entry_to_bibtex(entry):
     newdb = bibtexparser.bibdatabase.BibDatabase()
@@ -100,16 +106,18 @@ def get_reqtxt():
 @app.route("/v1/entry/<string:key>", defaults={"token": None}, methods=["GET"])
 @app.route("/v1/entry/<string:key>/<string:token>", methods=["GET"])
 def get_entry(key, token):
-    if not check_token(token, "read"):
-        return jsonify({"success": False, "reason": "access_denied", "message": "Your token does not grant read access."})
+    ok, reason = check_token(token, "read")
+    if not ok:
+        return jsonify(reason)
     return jsonify({"success": True, "entry": entry_by_key(key)})
 
 
 @app.route("/v1/bibentry/<string:key>", defaults={"token": None}, methods=["GET"])
 @app.route("/v1/bibentry/<string:key>/<string:token>", methods=["GET"])
 def get_bibentry(key, token):
-    if not check_token(token, "read"):
-        return "Access denied!"
+    ok, reason = check_token(token, "read")
+    if not ok:
+        return reason["message"]
     return entry_to_bibtex(entry_by_key(key))
 
 
@@ -117,8 +125,9 @@ def get_bibentry(key, token):
 def get_bibfile():
     if not request.json or not "entries" in request.json or not "token" in request.json:
         return "Invalid request"
-    if not check_token(request.json["token"], "read"):
-        return "Access denied!"
+    ok, reason = check_token(request.json["token"], "read")
+    if not ok:
+        return reason["message"]
 
     bib = ""
     for entry in request.json["entries"]:
@@ -130,9 +139,10 @@ def get_bibfile():
 @app.route("/v1/get_json", methods=["POST"])
 def get_bibfile_as_json():
     if not request.json or not "entries" in request.json or not "token" in request.json:
-        return "Invalid request"
-    if not check_token(request.json["token"], "read"):
-        return jsonify({"success": False, "reason": "access_denied", "message": "Your token does not grant read access."})
+        return jsonify({"success": False, "reason": "invalid_request", "message": "Invalid request"})
+    ok, reason = check_token(request.json["token"], "read")
+    if not ok:
+        return jsonify(reason)
 
     bib = []
     for entry in request.json["entries"]:
@@ -144,8 +154,9 @@ def get_bibfile_as_json():
 @app.route("/v1/suggest/<string:key>", defaults={"token": None}, methods=["GET"])
 @app.route("/v1/suggest/<string:key>/<string:token>", methods=["GET"])
 def suggest_entry(key, token):
-    if not check_token(token, "search"):
-        return jsonify({"success": False, "reason": "access_denied"})
+    ok, reason = check_token(token, "search")
+    if not ok:
+        return jsonify(reason)
 
     entry = entry_by_key(key)
     if not entry:
@@ -175,8 +186,9 @@ def suggest_entry(key, token):
 @app.route("/v1/search/<string:query>", defaults={"token": None}, methods=["GET"])
 @app.route("/v1/search/<string:query>/<string:token>", methods=["GET"])
 def search_entry(query, token):
-    if not check_token(token, "search"):
-        return "Access denied!"
+    ok, reason = check_token(token, "search")
+    if not ok:
+        return reason["message"]
 
     query_parts = query.split(" ")
     for q in query_parts:
@@ -201,8 +213,9 @@ def search_entry(query, token):
 def add_entry(key):
     if not request.json or not "entry" in request.json or not "token" in request.json:
         return jsonify({"success": False, "reason": "missing_entry"})
-    if not check_token(request.json["token"], "write"):
-        return jsonify({"success": False, "reason": "access_denied", "message": "Your token does not allow adding new bibliography entries."})
+    ok, reason = check_token(request.json["token"], "write")
+    if not ok:
+        return jsonify(reason)
 
     if "ID" not in request.json["entry"]:
         request.json["entry"]["ID"] = key
@@ -227,8 +240,9 @@ def add_entry(key):
 def replace_entry(key):
     if not request.json or not "entry" in request.json or not "token" in request.json:
         return jsonify({"success": False, "reason": "missing_entry"})
-    if not check_token(request.json["token"], "write"):
-        return jsonify({"success": False, "reason": "access_denied", "message": "Your token does not allow changing bibliography entries."})
+    ok, reason = check_token(request.json["token"], "write")
+    if not ok:
+        return jsonify(reason)
 
     for (idx, entry) in enumerate(bib_database.entries):
         if entry["ID"] == key:
@@ -242,8 +256,9 @@ def replace_entry(key):
 @app.route("/v1/entry/<string:key>", defaults={"token": None}, methods=["DELETE"])
 @app.route("/v1/entry/<string:key>/<string:token>", methods=["DELETE"])
 def remove_entry(key, token):
-    if not check_token(token, "delete"):
-        return jsonify({"success": False, "reasons": "access_denied", "message": "Your token does not allow deleting bibliography entries."})
+    ok, reason = check_token(token, "delete")
+    if not ok:
+        return jsonify(reason)
 
     for (idx, entry) in enumerate(bib_database.entries):
         if entry["ID"] == key:
@@ -258,8 +273,9 @@ def remove_entry(key, token):
 def add_entries():
     if not request.json or not "entries" in request.json or not "token" in request.json:
         return jsonify({"success": False, "reason": "missing_entry"})
-    if not check_token(request.json["token"], "write"):
-        return jsonify({"success": False, "reason": "access_denied", "message": "Your token does not allow modifying the bibliography. Remove the bib file to get a fresh one from the server"})
+    ok, reason = check_token(request.json["token"], "write")
+    if not ok:
+        return jsonify(reason)
 
     dups = []
     changes = False
@@ -301,7 +317,7 @@ def add_entries():
 
 @app.route("/v1/sync", methods=["GET"])
 def sync():
-    global repo, bib_database, token_db
+    global repo, bib_database, token_db, tokens
 
     parser = BibTexParser(common_strings=True)
     parser.ignore_nonstandard_types = False
@@ -317,17 +333,22 @@ def sync():
     with open(repo_path + "/" + repo_name) as bibtex_file:
         bib_database = bibtexparser.load(bibtex_file, parser)
 
-    for e in bib_database.entries:
-        if policy:
-            accept, reason = policy.check(e, bib_database.entries)
-            if not accept:
-                print("Reject %s: %s" % (e["ID"], reason))
+    # uncomment for debug purposes
+    #for e in bib_database.entries:
+        #if policy:
+            #accept, reason = policy.check(e, bib_database.entries)
+            #if not accept:
+                #print("Reject %s: %s" % (e["ID"], reason))
 
     try:
-        with open(repo_path + "/tokens.json") as tokens:
-            token_db = json.load(tokens)
-    except:
+        tdb = open(repo_path + "/tokens.json")
+        token_db = json.load(tdb)
+    except IOError:
+        print("No tokens.json, disable token checks")
         tokens = False
+    except:
+        print("Error: error in the tokens.json, could not load it!")
+        token_db = {}
 
     return "Synced!"
 
