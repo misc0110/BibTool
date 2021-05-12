@@ -56,6 +56,13 @@ A webhook ensures that manual edits of the bibliography file and authentication-
 To allow manual changes to the bibliography file or the authentication tokens without having to restart the server, it is necessary to configure a webhook. 
 The webhook has to send a notification to `<your bib server>/v1/webhook` on push events. There is no secret token required. 
 
+### Policy
+The tool allows defining a policy for bibliography entries. 
+If enabled, a new entry can only be added if it passes the checks of the policy. 
+The policy is written as a callback function in Python. 
+It has accecss to the entry that should be added, as well as the entire database containing all entries. 
+A simple policy is provided in `policy.py`: it rejects entries where the citation key has a length of 0, and accepts all other entries. 
+
 ### Run Server
 * Build the Docker container: `docker build --tag bibtool .`
 * Start the Docker container: `docker run -p 5000:5000 -v <path to bibliography folder>:/data bibtool`
