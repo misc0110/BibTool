@@ -10,7 +10,7 @@ RUN apt-get update && \
     git config --global user.email "bib@to.ol" && \
     git config --global user.name "BibTool"
 
-ENTRYPOINT ["python3", "server.py", "/data/", "main.bib"]
+ENTRYPOINT ["python3", "server.py", "/data/", "main.bib", "policy"]
 
 EXPOSE 5000
 

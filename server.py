@@ -387,8 +387,11 @@ if __name__ == "__main__":
     repo_path = sys.argv[1]
     repo_name = sys.argv[2]
     if len(sys.argv) > 3:
-        print("Import policy %s" % sys.argv[3])
-        policy = importlib.import_module(sys.argv[3])
+        try:
+            print("Import policy %s" % sys.argv[3])
+            policy = importlib.import_module(sys.argv[3])
+        except:
+            policy = None
     else:
         policy = None
 
