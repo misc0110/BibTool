@@ -51,6 +51,10 @@ def get_keys(filename, import_base=None):
     for f in inputs:
         if import_base is not None:
             f = os.path.join(import_base, f)
+        
+        if not os.path.exists(f):
+            #probably include add .tex extension
+            f += ".tex"
         keys |= set(get_keys(f))
 
     # find subimports and recursively parse them
