@@ -42,10 +42,9 @@ def get_keys(filename, import_base=None):
 
     # extract cites
     keys = set()
-    cites = re.findall("\\\\\(no\)?citeA?\\{([^\\}]+)\\}", content)
+    cites = re.findall("\\\\(no)?citeA?\\{([^\\}]+)\\}", content)
     for key in cites:
-        keys |= set(key.split(","))
-
+        keys |= set(key[1].split(","))
     # find inputs/include and recursively parse them
     inputs = re.findall("\\\\(?:input|include)\\{([^\\}]+)\\}", content)
     for f in inputs:
