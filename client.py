@@ -42,7 +42,7 @@ def get_keys(filename, import_base=None):
 
     # extract cites
     keys = set()
-    cites = re.findall("\\\\(no)?citeA?\\{([^\\}]+)\\}", content)
+    cites = re.findall("\\\\\(no\)?citeA?\\{([^\\}]+)\\}", content)
     for key in cites:
         keys |= set(key.split(","))
 
