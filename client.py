@@ -9,7 +9,7 @@ import difflib
 import os
 import argparse
 
-version = 12
+version = 13
 
 limit_traffic = True
 
@@ -324,7 +324,7 @@ elif action == "get":
 
             # suggest keys for unresolved keys
             for key in keys:
-                if not entry_by_key(key):
+                if not entry_by_key(key) and not '#' in key:
                     response = requests.get(server + "suggest/" + key + ("/%s" % (token if token else "")))
                     suggest = response.json()
                     if "success" in suggest and not suggest["success"]:
