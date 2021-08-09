@@ -9,7 +9,7 @@ import difflib
 import os
 import argparse
 
-version = 11
+version = 13
 
 limit_traffic = True
 
@@ -42,10 +42,9 @@ def get_keys(filename, import_base=None):
 
     # extract cites
     keys = set()
-    cites = re.findall("\\\\citeA?\\{([^\\}]+)\\}", content)
+    cites = re.findall("\\\\(no)?citeA?\\{([^\\}]+)\\}", content)
     for key in cites:
-        keys |= set(key.split(","))
-
+        keys |= set(key[1].split(","))
     # find inputs/include and recursively parse them
     inputs = re.findall("\\\\(?:input|include)\\{([^\\}]+)\\}", content)
     for f in inputs:
@@ -325,7 +324,7 @@ elif action == "get":
 
             # suggest keys for unresolved keys
             for key in keys:
-                if not entry_by_key(key):
+                if not entry_by_key(key) and not '#' in key:
                     response = requests.get(server + "suggest/" + key + ("/%s" % (token if token else "")))
                     suggest = response.json()
                     if "success" in suggest and not suggest["success"]:
