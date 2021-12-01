@@ -9,7 +9,7 @@ import difflib
 import os
 import argparse
 
-version = 13
+version = 14
 
 limit_traffic = True
 
@@ -59,6 +59,7 @@ def get_keys(filename, import_base=None):
         keys |= set(get_keys(filepath, import_base=f[0]))
 
     keys = sorted(list([k.strip() for k in keys]))
+    keys = [k for k in keys if len(k) != 0]
     return keys
 
 
