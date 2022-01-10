@@ -216,6 +216,11 @@ def add_entry(key):
     ok, reason = check_token(request.json["token"], "write")
     if not ok:
         return jsonify(reason)
+    # check if the client is forcing the server policy
+    if "force" in request.json:
+        ok, reason = check_token(request.json["token"], "force")
+        if not ok:
+            return jsonify(reason)
 
     if "ID" not in request.json["entry"]:
         request.json["entry"]["ID"] = key
@@ -224,7 +229,7 @@ def add_entry(key):
     if existing:
         return jsonify({"success": False, "reason": "exists", "entry": existing})
 
-    if policy:
+    if policy and "force" not in request.json:
         accept, reason = policy.check(request.json["entry"], bib_database.entries)
         if not accept:
             entry = request.json["entry"]
@@ -276,6 +281,11 @@ def add_entries():
     ok, reason = check_token(request.json["token"], "write")
     if not ok:
         return jsonify(reason)
+    # check if the client is forcing the server policy
+    if "force" in request.json:
+        ok, reason = check_token(request.json["token"], "force")
+        if not ok:
+            return jsonify(reason)
 
     dups = []
     changes = False
@@ -290,7 +300,7 @@ def add_entries():
         if len(dup) == 0:
             # new entry, add
             if not entry_by_key(entry["ID"]):
-                if policy:
+                if policy and "force" not in request.json:
                     accept, reason = policy.check(entry, bib_database.entries)
                     if not accept:
                         entry["reason"] = reason

@@ -30,7 +30,8 @@ Authentication is handled via tokens defined in `tokens.json`. The file has the 
         "search": true,
         "read": true,
         "write": true,
-        "delete": true
+        "delete": true,
+        "force":true
     },
     "token2": {
         "search": true,
@@ -47,6 +48,7 @@ The permissions are:
 * `read`: Get a bibliography entry based on an identifier
 * `write`: Add or modify bibliography entries
 * `delete`: Delete bibliography entries
+* `force`: Allow bibliography entries writes to bypass server policy
 
 ## Server
 The server runs inside a Docker container and works on a Git-versioned bibliography file outside the container. 
