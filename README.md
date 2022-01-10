@@ -31,7 +31,7 @@ Authentication is handled via tokens defined in `tokens.json`. The file has the 
         "read": true,
         "write": true,
         "delete": true,
-        "force":true
+        "force": true
     },
     "token2": {
         "search": true,
