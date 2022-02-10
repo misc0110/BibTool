@@ -38,7 +38,12 @@ if server[-1] != '/': server += "/"
 if not server.endswith("/v1/"): server += "v1/"
 
 def get_keys(filename, import_base=None):
-    content = open(filename).read()
+    try:
+        if not os.path.isfile(filename):
+            filename += ".tex"
+        content = open(filename).read()
+    except:
+        return []
 
     # extract cites
     keys = set()
