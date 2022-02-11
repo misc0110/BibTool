@@ -9,7 +9,7 @@ import difflib
 import os
 import argparse
 
-version = 14
+version = 15
 
 limit_traffic = True
 

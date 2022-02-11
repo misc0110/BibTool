@@ -7,7 +7,7 @@ import json
 import sys
 import importlib
 
-VERSION = 14
+VERSION = 15
 
 app = Flask(__name__)
 tokens = True
