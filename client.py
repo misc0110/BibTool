@@ -150,6 +150,19 @@ def resolve_duplicate():
             return "i"
     return None
 
+def resolve_policy_reject():
+    print("Your options are")
+    print("  force entry write to the server (F)")
+    print("  ignore, do not apply any changes (I)")
+    print("  abort without changes (A)")
+    while True:
+        action = input("Your choice [f/I/a]: ").lower()
+        if action == "f" or action == "i" or action == "a":
+            return action
+        if not action or action == "":
+            return "i"
+    return None
+
 
 def update_local_bib(key, new_entry):
     for (idx, entry) in enumerate(bib_database.entries):
@@ -163,8 +176,12 @@ def update_remote_bib(key, new_entry):
     if "success" in response.json() and not response.json()["success"]:
         show_error(response.json())
 
-def add_remote_bib(key, entry):
-    response = requests.post(server + "entry/%s" % key, json = {"entry": entry, "token": token})
+def add_remote_bib(key, entry, force=False):
+    if force:
+        # do not rely on boolean encoding of `force`
+        response = requests.post(server + "entry/%s" % key, json = {"entry": entry, "token": token, "force": "true"})
+    else:
+        response = requests.post(server + "entry/%s" % key, json = {"entry": entry, "token": token})
     if "success" in response.json() and not response.json()["success"]:
         show_error(response.json())
 
@@ -275,7 +292,18 @@ elif action == "get":
         response = requests.post(server + "update", json = {"entries": bib_database.entries, "token": token})
         result = response.json()
         if not result["success"]:
-            if result["reason"] == "duplicate":
+            if result["reason"] == "policy":
+                #print(result["entries"])
+                for entry in result["entries"]:
+                    print("\n[!] Server policy rejected entry %s. Reason: %s" % (entry["ID"], entry["reason"]))
+                    action = resolve_policy_reject()
+                    if action == "i":
+                        pass
+                    elif action == "a":
+                        sys.exit(1)
+                    elif action == "f":
+                        add_remote_bib(entry["ID"], entry_by_key(entry["ID"]), force=True)
+            elif result["reason"] == "duplicate":
                 #print(result["entries"])
                 for dup in result["entries"]:
                     print("\n[!] There is already a similar entry for %s on the server (%s) [Levenshtein %d]" % (dup[1], dup[2]["ID"], dup[0]))
