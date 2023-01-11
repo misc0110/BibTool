@@ -249,6 +249,13 @@ def replace_entry(key):
     if not ok:
         return jsonify(reason)
 
+    if policy and "force" not in request.json:
+        accept, reason = policy.check(request.json["entry"], bib_database.entries)
+        if not accept:
+            entry = request.json["entry"]
+            entry["reason"] = reason
+            return jsonify({"success": False, "reason": "policy", "entries": [entry]})
+
     for (idx, entry) in enumerate(bib_database.entries):
         if entry["ID"] == key:
             bib_database.entries[idx] = request.json["entry"]
