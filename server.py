@@ -13,22 +13,36 @@ app = Flask(__name__)
 tokens = True
 no_commit = False
 
-token_db = {
-  "test": {"search": True, "read": True, "write": True, "delete": True}
-}
+# Per-realm global state
+token_db = {}
+bib_database = {}
+repo = {}
+tokens_dict = {}  # for future use if needed
+default_realm = ""
+
+def get_realm():
+    global default_realm
+    if request.method in ["POST", "PUT"]:
+        if request.json and "realm" in request.json:
+            return request.json["realm"]
+    if "realm" in request.args:
+        return request.args["realm"]
+    if "realm" in request.view_args:
+        return request.view_args["realm"]
+    return default_realm
 
 def check_token(token, operation):
+    realm = get_realm()
+    ensure_realm_loaded(realm)
     if not tokens:
         return (True, None)
-
-    if len(token_db) == 0:
+    if len(token_db[realm]) == 0:
         return (False, {"success": False, "reason": "server_problem", "message": "The token database on the server seems to be corrupted, please inform your BibTool administrator."})
-
-    if not token in token_db:
+    if not token in token_db[realm]:
         return (False, {"success": False, "reason": "access_denied", "message": "Invalid token. Check your 'token' file."})
-    if not operation in token_db[token]:
+    if not operation in token_db[realm][token]:
         return (False, {"success": False, "reason": "access_denied", "message": "Your token does not grant %s access." % operation})
-    ok = token_db[token][operation]
+    ok = token_db[realm][token][operation]
     if not ok:
         return (False, {"success": False, "reason": "access_denied", "message": "Your token does not grant %s access." % operation})
     else:
@@ -41,8 +55,10 @@ def entry_to_bibtex(entry):
 
 
 def get_duplicates(entry):
+    realm = get_realm()
+    ensure_realm_loaded(realm)
     dups = []
-    for e in bib_database.entries:
+    for e in bib_database[realm].entries:
         dist = 0
         fields = set(e.keys())
         fields.update(entry.keys())
@@ -58,24 +74,31 @@ def get_duplicates(entry):
 
 
 def entry_by_key(key):
-    for entry in bib_database.entries:
+    realm = get_realm()
+    ensure_realm_loaded(realm)
+    for entry in bib_database[realm].entries:
         if entry["ID"] == key:
             return entry
     return None
 
 
 def save_bib(commit_message = None, token = None):
-    with open(repo_path + "/" + repo_name, "w") as bibtex_file:
-        bibtexparser.dump(bib_database, bibtex_file)
-    if repo and not no_commit:
+    realm = get_realm()
+    ensure_realm_loaded(realm)
+    import os
+    global repo_path, repo_name
+    bib_path = os.path.join(repo_path, realm, repo_name)
+    with open(bib_path, "w") as bibtex_file:
+        bibtexparser.dump(bib_database[realm], bibtex_file)
+    if repo[realm] and not no_commit:
         msg = commit_message if commit_message else "update"
         if tokens:
             msg += " (Token %s)" % (token if token else "none")
         msg = "[BibTool] %s" % msg
-        repo.index.add(repo_path + "/" + repo_name)
-        repo.index.commit(msg)
+        repo[realm].index.add([bib_path])
+        repo[realm].index.commit(msg)
         try:
-            repo.remotes.origin.push()
+            repo[realm].remotes.origin.push()
         except:
             print("Warning: could not push to repository")
 
@@ -115,6 +138,8 @@ def get_entry(key, token):
 @app.route("/v1/bibentry/<string:key>", defaults={"token": None}, methods=["GET"])
 @app.route("/v1/bibentry/<string:key>/<string:token>", methods=["GET"])
 def get_bibentry(key, token):
+    realm = get_realm()
+    ensure_realm_loaded(realm)
     ok, reason = check_token(token, "read")
     if not ok:
         return reason["message"]
@@ -123,6 +148,8 @@ def get_bibentry(key, token):
 
 @app.route("/v1/get", methods=["POST"])
 def get_bibfile():
+    realm = get_realm()
+    ensure_realm_loaded(realm)
     if not request.json or not "entries" in request.json or not "token" in request.json:
         return "Invalid request"
     ok, reason = check_token(request.json["token"], "read")
@@ -138,6 +165,8 @@ def get_bibfile():
 
 @app.route("/v1/get_json", methods=["POST"])
 def get_bibfile_as_json():
+    realm = get_realm()
+    ensure_realm_loaded(realm)
     if not request.json or not "entries" in request.json or not "token" in request.json:
         return jsonify({"success": False, "reason": "invalid_request", "message": "Invalid request"})
     ok, reason = check_token(request.json["token"], "read")
@@ -154,6 +183,8 @@ def get_bibfile_as_json():
 @app.route("/v1/suggest/<string:key>", defaults={"token": None}, methods=["GET"])
 @app.route("/v1/suggest/<string:key>/<string:token>", methods=["GET"])
 def suggest_entry(key, token):
+    realm = get_realm()
+    ensure_realm_loaded(realm)
     ok, reason = check_token(token, "search")
     if not ok:
         return jsonify(reason)
@@ -161,7 +192,7 @@ def suggest_entry(key, token):
     entry = entry_by_key(key)
     if not entry:
         entries = []
-        for entry in bib_database.entries:
+        for entry in bib_database[realm].entries:
             dist = Levenshtein.distance(entry["ID"].lower(), key.lower())
             if key.lower() in entry["ID"].lower() or dist == 0:
                 entries.append((1, entry))
@@ -186,6 +217,8 @@ def suggest_entry(key, token):
 @app.route("/v1/search/<string:query>", defaults={"token": None}, methods=["GET"])
 @app.route("/v1/search/<string:query>/<string:token>", methods=["GET"])
 def search_entry(query, token):
+    realm = get_realm()
+    ensure_realm_loaded(realm)
     ok, reason = check_token(token, "search")
     if not ok:
         return reason["message"]
@@ -195,7 +228,7 @@ def search_entry(query, token):
         if len(q) < 3:
             return "Each query must be at least 3 characters!"
     entries = []
-    for entry in bib_database.entries:
+    for entry in bib_database[realm].entries:
         found_part = [False for q in query_parts]
         for field in entry:
             for (idx, q) in enumerate(query_parts):
@@ -211,6 +244,8 @@ def search_entry(query, token):
 
 @app.route("/v1/entry/<string:key>", methods=["POST"])
 def add_entry(key):
+    realm = get_realm()
+    ensure_realm_loaded(realm)
     if not request.json or not "entry" in request.json or not "token" in request.json:
         return jsonify({"success": False, "reason": "missing_entry"})
     ok, reason = check_token(request.json["token"], "write")
@@ -230,19 +265,21 @@ def add_entry(key):
         return jsonify({"success": False, "reason": "exists", "entry": existing})
 
     if policy and "force" not in request.json:
-        accept, reason = policy.check(request.json["entry"], bib_database.entries)
+        accept, reason = policy.check(request.json["entry"], bib_database[realm].entries)
         if not accept:
             entry = request.json["entry"]
             entry["reason"] = reason
             return jsonify({"success": False, "reason": "policy", "entries": [entry]})
 
-    bib_database.entries.append(request.json["entry"])
+    bib_database[realm].entries.append(request.json["entry"])
     save_bib("Added %s" % request.json["entry"]["ID"], request.json["token"])
     return jsonify({"success": True})
 
 
 @app.route("/v1/entry/<string:key>", methods=["PUT"])
 def replace_entry(key):
+    realm = get_realm()
+    ensure_realm_loaded(realm)
     if not request.json or not "entry" in request.json or not "token" in request.json:
         return jsonify({"success": False, "reason": "missing_entry"})
     ok, reason = check_token(request.json["token"], "write")
@@ -250,15 +287,15 @@ def replace_entry(key):
         return jsonify(reason)
 
     if policy and "force" not in request.json:
-        accept, reason = policy.check(request.json["entry"], bib_database.entries)
+        accept, reason = policy.check(request.json["entry"], bib_database[realm].entries)
         if not accept:
             entry = request.json["entry"]
             entry["reason"] = reason
             return jsonify({"success": False, "reason": "policy", "entries": [entry]})
 
-    for (idx, entry) in enumerate(bib_database.entries):
+    for (idx, entry) in enumerate(bib_database[realm].entries):
         if entry["ID"] == key:
-            bib_database.entries[idx] = request.json["entry"]
+            bib_database[realm].entries[idx] = request.json["entry"]
             save_bib("Changed %s" % key, request.json["token"])
             return jsonify({"success": True})
 
@@ -268,13 +305,15 @@ def replace_entry(key):
 @app.route("/v1/entry/<string:key>", defaults={"token": None}, methods=["DELETE"])
 @app.route("/v1/entry/<string:key>/<string:token>", methods=["DELETE"])
 def remove_entry(key, token):
+    realm = get_realm()
+    ensure_realm_loaded(realm)
     ok, reason = check_token(token, "delete")
     if not ok:
         return jsonify(reason)
 
-    for (idx, entry) in enumerate(bib_database.entries):
+    for (idx, entry) in enumerate(bib_database[realm].entries):
         if entry["ID"] == key:
-            del bib_database.entries[idx]
+            del bib_database[realm].entries[idx]
             save_bib("Deleted %s" % key, token)
             return jsonify({"success": True})
 
@@ -283,6 +322,8 @@ def remove_entry(key, token):
 
 @app.route("/v1/update", methods=["POST"])
 def add_entries():
+    realm = get_realm()
+    ensure_realm_loaded(realm)
     if not request.json or not "entries" in request.json or not "token" in request.json:
         return jsonify({"success": False, "reason": "missing_entry"})
     ok, reason = check_token(request.json["token"], "write")
@@ -308,13 +349,13 @@ def add_entries():
             # new entry, add
             if not entry_by_key(entry["ID"]):
                 if policy and "force" not in request.json:
-                    accept, reason = policy.check(entry, bib_database.entries)
+                    accept, reason = policy.check(entry, bib_database[realm].entries)
                     if not accept:
                         entry["reason"] = reason
                         rejects.append(entry)
                         print("Rejecting entry %s" % entry["ID"])
                         continue
-                bib_database.entries.append(entry)
+                bib_database[realm].entries.append(entry)
                 changelog.append("Added %s" % entry["ID"])
                 changes = True
         else:
@@ -335,38 +376,35 @@ def add_entries():
 @app.route("/v1/sync", methods=["GET"])
 def sync():
     global repo, bib_database, token_db, tokens
-
+    realm = get_realm()
+    ensure_realm_loaded(realm)
     parser = BibTexParser(common_strings=True)
     parser.ignore_nonstandard_types = False
     parser.homogenize_fields = True
-
-    repo = git.Repo(repo_path)
+    import os
+    realm_dir = os.path.join(repo_path, realm)
     try:
-        origin = repo.remotes.origin
+        repo[realm] = git.Repo(realm_dir)
+        origin = repo[realm].remotes.origin
         origin.pull()
     except:
         print("Warning: could not pull from repository")
-
-    with open(repo_path + "/" + repo_name) as bibtex_file:
-        bib_database = bibtexparser.load(bibtex_file, parser)
-
-    # uncomment for debug purposes
-    #for e in bib_database.entries:
-        #if policy:
-            #accept, reason = policy.check(e, bib_database.entries)
-            #if not accept:
-                #print("Reject %s: %s" % (e["ID"], reason))
-
+    bib_path = os.path.join(realm_dir, repo_name)
     try:
-        tdb = open(repo_path + "/tokens.json")
-        token_db = json.load(tdb)
+        with open(bib_path) as bibtex_file:
+            bib_database[realm] = bibtexparser.load(bibtex_file, parser)
+    except Exception:
+        bib_database[realm] = bibtexparser.bibdatabase.BibDatabase()
+    tokens_path = os.path.join(realm_dir, "tokens.json")
+    try:
+        with open(tokens_path) as tdb:
+            token_db[realm] = json.load(tdb)
     except IOError:
         print("No tokens.json, disable token checks")
         tokens = False
     except:
         print("Error: error in the tokens.json, could not load it!")
-        token_db = {}
-
+        token_db[realm] = {}
     return "Synced!"
 
 
@@ -395,11 +433,44 @@ def version():
     return jsonify({"version": VERSION, "url": "client.py"})
 
 
+def ensure_realm_loaded(realm):
+    # Only load if not already loaded
+    if realm in repo and realm in bib_database and realm in token_db:
+        return
+    import os
+    from pathlib import Path
+    global repo_path, repo_name
+    realm_dir = os.path.join(repo_path, realm)
+    Path(realm_dir).mkdir(parents=True, exist_ok=True)
+    bib_path = os.path.join(realm_dir, repo_name)
+    tokens_path = os.path.join(realm_dir, "tokens.json")
+    # Load repo
+    try:
+        repo[realm] = git.Repo(realm_dir)
+    except Exception:
+        repo[realm] = None
+    # Load bib database
+    parser = BibTexParser(common_strings=True)
+    parser.ignore_nonstandard_types = False
+    parser.homogenize_fields = True
+    try:
+        with open(bib_path) as bibtex_file:
+            bib_database[realm] = bibtexparser.load(bibtex_file, parser)
+    except Exception:
+        bib_database[realm] = bibtexparser.bibdatabase.BibDatabase()
+    # Load tokens
+    try:
+        with open(tokens_path) as tdb:
+            token_db[realm] = json.load(tdb)
+    except Exception:
+        token_db[realm] = {}
+
+
 if __name__ == "__main__":
-    global repo_path, repo_name, policy
+    global repo_path, repo_name, policy, default_realm
 
     if len(sys.argv) < 3:
-        print("Usage: %s <repo path> <bib filename> [<policy>]" % sys.argv[0])
+        print("Usage: %s <repo path> <bib filename> [policy] [default realm]" % sys.argv[0])
         sys.exit(1)
     repo_path = sys.argv[1]
     repo_name = sys.argv[2]
@@ -411,6 +482,8 @@ if __name__ == "__main__":
             policy = None
     else:
         policy = None
+    if len(sys.argv) > 4:
+        default_realm = sys.argv[4]
 
     sync()
 

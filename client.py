@@ -20,6 +20,7 @@ parser.add_argument("--server", dest="server", action="store", default="", requi
 parser.add_argument("--tex", dest="tex", action="store", default="main.tex", help="LaTeX file")
 parser.add_argument("--query", dest="query", action="store", default="", help="Query to search for (if action is search)")
 parser.add_argument("action")
+parser.add_argument("--realm", dest="realm", action="store", required=True, help="Realm to select repository")
 
 args = parser.parse_args(sys.argv[1:])
 
@@ -36,6 +37,13 @@ fname = args.tex
 server = args.server
 if server[-1] != '/': server += "/"
 if not server.endswith("/v1/"): server += "v1/"
+
+def append_token_realm(url, token=None, realm=None):
+    if token:
+        url += "/%s" % token
+    if realm:
+        url += "/%s" % realm
+    return url
 
 def get_keys(filename, import_base=None):
     try:
@@ -172,21 +180,22 @@ def update_local_bib(key, new_entry):
 
 
 def update_remote_bib(key, new_entry):
-    response = requests.put(server + "entry/%s" % key, json = {"entry": new_entry, "token": token})
+    response = requests.put(server + "entry/%s" % key, json = {"entry": new_entry, "token": token, "realm": args.realm})
     if "success" in response.json() and not response.json()["success"]:
         show_error(response.json())
 
 def add_remote_bib(key, entry, force=False):
+    data = {"entry": entry, "token": token, "realm": args.realm}
     if force:
-        # do not rely on boolean encoding of `force`
-        response = requests.post(server + "entry/%s" % key, json = {"entry": entry, "token": token, "force": "true"})
-    else:
-        response = requests.post(server + "entry/%s" % key, json = {"entry": entry, "token": token})
+        data["force"] = "true"
+    response = requests.post(server + "entry/%s" % key, json = data)
     if "success" in response.json() and not response.json()["success"]:
         show_error(response.json())
 
 def remove_remote_bib(key):
-    response = requests.delete(server + "entry/%s%s" % (key, "/%s" % token if token else ""))
+    url = server + "entry/%s" % key
+    url = append_token_realm(url, token, args.realm)
+    response = requests.delete(url)
     if "success" in response.json() and not response.json()["success"]:
         show_error(response.json())
 
@@ -263,11 +272,15 @@ if action == "search":
     if len(args.query) < 3:
         print("Usage: %s search --query <query>" % sys.argv[0])
         sys.exit(1)
-    response = requests.get(server + "search/" + args.query + ("/%s" % token if token else ""))
+    url = server + "search/" + args.query
+    url = append_token_realm(url, token, args.realm)
+    response = requests.get(url)
     print(response.text)
 
 elif action == "sync":
-    response = requests.get(server + "sync")
+    url = server + "sync"
+    url = append_token_realm(url, token, args.realm)
+    response = requests.get(url)
     print(response.text)
 
 elif action == "get":
@@ -289,7 +302,7 @@ elif action == "get":
 
     # update
     if update:
-        response = requests.post(server + "update", json = {"entries": bib_database.entries, "token": token})
+        response = requests.post(server + "update", json = {"entries": bib_database.entries, "token": token, "realm": args.realm})
         result = response.json()
         if not result["success"]:
             if result["reason"] == "policy":
@@ -345,7 +358,7 @@ elif action == "get":
                 show_error(result)
 
     if fetch:
-        response = requests.post(server + "get_json", json = {"entries": keys, "token": token})
+        response = requests.post(server + "get_json", json = {"entries": keys, "token": token, "realm": args.realm})
         bib = response.json()
         if "success" in bib and not bib["success"]:
             show_error(bib)
@@ -359,7 +372,8 @@ elif action == "get":
             # suggest keys for unresolved keys
             for key in keys:
                 if not entry_by_key(key) and not '#' in key:
-                    response = requests.get(server + "suggest/" + key + ("/%s" % (token if token else "")))
+                    url = server + "suggest/" + key + "/%s/%s" % (token, args.realm)
+                    response = requests.get(url)
                     suggest = response.json()
                     if "success" in suggest and not suggest["success"]:
                         show_error(suggest)
