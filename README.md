@@ -66,6 +66,11 @@ It has accecss to the entry that should be added, as well as the entire database
 A simple policy is provided in `policy.py`: it rejects entries where the citation key has a length of 0, and accepts all other entries. 
 
 ### Run Server
+With Docker Compose:
+* Start the server: `BIBTOOL_DATA=<path to bibliography folder> docker compose up -d --build`
+* `BIBTOOL_DATA` defaults to `./data`, `BIBTOOL_PORT` sets the host port (default 5000). Both can also be set in a `.env` file next to `docker-compose.yml`.
+
+Without Docker Compose:
 * Build the Docker container: `docker build --tag bibtool .`
 * Start the Docker container: `docker run -p 5000:5000 -v <path to bibliography folder>:/data bibtool`
 

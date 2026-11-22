@@ -1,0 +1,9 @@
+services:
+  bibtool:
+    build: .
+    image: bibtool
+    restart: unless-stopped
+    ports:
+      - "${BIBTOOL_PORT:-5000}:5000"
+    volumes:
+      - "${BIBTOOL_DATA:-./data}:/data"
