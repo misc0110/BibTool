@@ -4,12 +4,100 @@ import requests
 import json
 import hashlib
 import bibtexparser
-from bibtexparser.bparser import BibTexParser
 import difflib
 import os
 import argparse
 
-version = 15
+BIBTEXPARSER_V2 = hasattr(bibtexparser, "parse_string")
+
+if not BIBTEXPARSER_V2:
+    from bibtexparser.bparser import BibTexParser
+    from bibtexparser.bibdatabase import BibDatabase
+
+    def bib_loads(text):
+        parser = BibTexParser(common_strings=True)
+        parser.ignore_nonstandard_types = False
+        parser.homogenize_fields = True
+        return bibtexparser.loads(text if text.strip() else "\n", parser)
+
+    def bib_dumps(bib_db):
+        return bibtexparser.dumps(bib_db)
+
+    def entry_to_bibtex(entry):
+        newdb = BibDatabase()
+        newdb.entries = [ entry ]
+        return bibtexparser.dumps(newdb)
+
+else:
+    from bibtexparser.model import Entry, Field, ParsingFailedBlock
+
+    _COMMON_STRINGS = {"jan": "January", "feb": "February", "mar": "March", "apr": "April",
+                       "may": "May", "jun": "June", "jul": "July", "aug": "August",
+                       "sep": "September", "oct": "October", "nov": "November", "dec": "December"}
+    _FIELD_ALIASES = {"keyw": "keyword", "keywords": "keyword", "authors": "author",
+                      "editors": "editor", "urls": "url", "link": "url", "links": "url",
+                      "subjects": "subject", "xref": "crossref"}
+
+    class BibDatabase(object):
+        def __init__(self, entries=None, other_blocks=None):
+            self.entries = entries if entries is not None else []
+            self.other_blocks = other_blocks if other_blocks is not None else []
+
+    def _entry_to_dict(block):
+        entry = {}
+        for field in block.fields:
+            key = field.key.lower()
+            key = _FIELD_ALIASES.get(key, key)
+            value = field.value if isinstance(field.value, str) else str(field.value)
+            if field.enclosing == "no-enclosing" and value.lower() in _COMMON_STRINGS:
+                value = _COMMON_STRINGS[value.lower()]
+            entry[key] = value
+        entry["ENTRYTYPE"] = block.entry_type.lower()
+        entry["ID"] = block.key
+        return entry
+
+    def _dict_to_entry(entry):
+        fields = [Field(k, entry[k]) for k in sorted(entry) if k not in ("ID", "ENTRYTYPE")]
+        return Entry(entry.get("ENTRYTYPE", "misc"), entry["ID"], fields)
+
+    def _write_block(block):
+        bib_format = bibtexparser.BibtexFormat()
+        bib_format.indent = " "
+        bib_format.parsing_failed_comment = ""
+        return bibtexparser.write_string(bibtexparser.Library([block]), bibtex_format=bib_format)
+
+    def bib_loads(text):
+        library = bibtexparser.parse_string(text)
+        entries = []
+        other = []
+        for block in library.blocks:
+            if isinstance(block, Entry):
+                entries.append(_entry_to_dict(block))
+            else:
+                if isinstance(block, ParsingFailedBlock):
+                    print("Warning: could not parse BibTeX block (kept unchanged): %s" % block.error)
+                other.append(block)
+        return BibDatabase(entries, other)
+
+    def bib_dumps(bib_db):
+        parts = [_write_block(b) for b in bib_db.other_blocks]
+        parts += [entry_to_bibtex(e) for e in sorted(bib_db.entries, key=lambda e: e["ID"].lower())]
+        return "\n".join(p.strip("\n") + "\n" for p in parts)
+
+    def entry_to_bibtex(entry):
+        return _write_block(_dict_to_entry(entry))
+
+
+def bib_load(path):
+    with open(path, encoding="utf-8") as bibtex_file:
+        return bib_loads(bibtex_file.read())
+
+
+def bib_dump(bib_db, path):
+    with open(path, "w", encoding="utf-8") as bibtex_file:
+        bibtex_file.write(bib_dumps(bib_db))
+
+version = 16
 
 limit_traffic = True
 
@@ -58,7 +146,7 @@ def get_keys(filename, import_base=None):
         keys |= set(get_keys(f))
 
     # find subimports and recursively parse them
-    subimports = re.findall("\\\\subimport\*?\\{(.*)\\}\\{(.*)\\}", content)
+    subimports = re.findall("\\\\subimport\\*?\\{([^\\}]*)\\}\\{([^\\}]*)\\}", content)
     for f in subimports:
         filepath = os.path.join(f[0], f[1])
         keys |= set(get_keys(filepath, import_base=f[0]))
@@ -98,12 +186,6 @@ def entry_by_key(key):
         if entry["ID"] == key:
             return entry
     return None
-
-
-def entry_to_bibtex(entry):
-    newdb = bibtexparser.bibdatabase.BibDatabase()
-    newdb.entries = [ entry ]
-    return bibtexparser.dumps(newdb)
 
 
 def inline_diff(a, b):
@@ -207,8 +289,7 @@ def save_bib_hash():
 
 
 def save_bib():
-    with open('main.bib', 'w') as bibtex_file:
-        bibtexparser.dump(bib_database, bibtex_file)
+    bib_dump(bib_database, 'main.bib')
     save_bib_hash()
 
 
@@ -227,17 +308,11 @@ def show_error(obj):
 
 action = args.action
 
-parser = BibTexParser(common_strings=True)
-parser.ignore_nonstandard_types = False
-parser.homogenize_fields = True
-
 if not os.path.exists("main.bib") or os.stat("main.bib").st_size == 0:
-    bib_database = bibtexparser.loads("\n")
+    bib_database = bib_loads("")
 else:
     try:
-        with open('main.bib') as bibtex_file:
-            bib_database = bibtexparser.load(bibtex_file, parser)
-            #print(bib_database.entries)
+        bib_database = bib_load('main.bib')
     except Exception as e:
         print("Malformed bibliography file!\n")
         print(e)
