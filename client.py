@@ -7,6 +7,8 @@ import bibtexparser
 import difflib
 import os
 import argparse
+import tempfile
+from urllib.parse import quote, urlparse
 
 BIBTEXPARSER_V2 = hasattr(bibtexparser, "parse_string")
 
@@ -56,8 +58,17 @@ else:
         entry["ID"] = block.key
         return entry
 
+    _MONTH_MACROS = {v.lower(): k for k, v in _COMMON_STRINGS.items()}
+    _MONTH_MACROS.update({k: k for k in _COMMON_STRINGS})
+
+    def _make_field(key, value):
+        # write months as BibTeX month macros (month = jan) instead of {January}
+        if key == "month" and isinstance(value, str) and value.strip().lower() in _MONTH_MACROS:
+            return Field(key, _MONTH_MACROS[value.strip().lower()], enclosing="no-enclosing")
+        return Field(key, value)
+
     def _dict_to_entry(entry):
-        fields = [Field(k, entry[k]) for k in sorted(entry) if k not in ("ID", "ENTRYTYPE")]
+        fields = [_make_field(k, entry[k]) for k in sorted(entry) if k not in ("ID", "ENTRYTYPE")]
         return Entry(entry.get("ENTRYTYPE", "misc"), entry["ID"], fields)
 
     def _write_block(block):
@@ -97,7 +108,7 @@ def bib_dump(bib_db, path):
     with open(path, "w", encoding="utf-8") as bibtex_file:
         bibtex_file.write(bib_dumps(bib_db))
 
-version = 16
+version = 17
 
 limit_traffic = True
 
@@ -121,53 +132,77 @@ else:
         pass
 
 fname = args.tex
-server = args.server
+server = args.server.strip()
+if not server:
+    print("Usage: %s --server <your bib server> <action>" % sys.argv[0])
+    sys.exit(1)
 if server[-1] != '/': server += "/"
 if not server.endswith("/v1/"): server += "v1/"
 
-def get_keys(filename, import_base=None):
+CITE_RE = re.compile(r"\\(?:[a-zA-Z]*cite[a-zA-Z]*|nocite)\*?\s*(?:\[[^\]]*\]\s*){0,2}\{([^\}]+)\}")
+INPUT_RE = re.compile(r"\\(?:input|include)\s*\{([^\}]+)\}")
+SUBIMPORT_RE = re.compile(r"\\subimport\*?\s*\{([^\}]*)\}\s*\{([^\}]*)\}")
+COMMENT_RE = re.compile(r"(?<!\\)%.*")
+
+
+def get_keys(filename, import_base=None, visited=None):
+    if visited is None:
+        visited = set()
     try:
         if not os.path.isfile(filename):
             filename += ".tex"
+        real = os.path.realpath(filename)
+        if real in visited:
+            return []
+        visited.add(real)
         content = open(filename).read()
     except:
         return []
 
+    content = COMMENT_RE.sub("", content)
+
     # extract cites
     keys = set()
-    cites = re.findall("\\\\(no)?citeA?\\{([^\\}]+)\\}", content)
-    for key in cites:
-        keys |= set(key[1].split(","))
+    for key in CITE_RE.findall(content):
+        keys |= set(key.split(","))
     # find inputs/include and recursively parse them
-    inputs = re.findall("\\\\(?:input|include)\\{([^\\}]+)\\}", content)
-    for f in inputs:
+    for f in INPUT_RE.findall(content):
+        f = f.strip()
         if import_base is not None:
             f = os.path.join(import_base, f)
-        keys |= set(get_keys(f))
+        keys |= set(get_keys(f, import_base, visited))
 
     # find subimports and recursively parse them
-    subimports = re.findall("\\\\subimport\\*?\\{([^\\}]*)\\}\\{([^\\}]*)\\}", content)
-    for f in subimports:
-        filepath = os.path.join(f[0], f[1])
-        keys |= set(get_keys(filepath, import_base=f[0]))
+    for f in SUBIMPORT_RE.findall(content):
+        base = f[0].strip()
+        if import_base is not None:
+            base = os.path.join(import_base, base)
+        keys |= set(get_keys(os.path.join(base, f[1].strip()), import_base=base, visited=visited))
 
     keys = sorted(list([k.strip() for k in keys]))
-    keys = [k for k in keys if len(k) != 0]
+    keys = [k for k in keys if len(k) != 0 and k != "*"]
     return keys
 
 
+def keys_hash(keys):
+    return hashlib.sha256("\n".join(keys).encode("utf-8")).hexdigest()
+
+
 def keys_have_changed(keys):
-    new_keys = hashlib.sha256("\n".join(keys).encode("utf-8")).hexdigest()
     old_keys = ""
     try:
         old_keys = open("main.bib.keys.sha").read().strip()
     except:
         pass
+    return (keys_hash(keys) != old_keys)
+
+
+def save_keys_hash(keys):
+    # only called after the keys were fetched successfully
     try:
-        open("main.bib.keys.sha", "w").write(new_keys)
+        open("main.bib.keys.sha", "w").write(keys_hash(keys))
     except:
         pass
-    return (new_keys != old_keys)
 
 
 def bib_has_changed(bib):
@@ -177,7 +212,6 @@ def bib_has_changed(bib):
         old_bib = open("main.bib.sha").read().strip()
     except:
         pass
-    save_bib_hash()
     return (new_bib != old_bib)
 
 
@@ -253,31 +287,51 @@ def update_local_bib(key, new_entry):
             break
 
 
+def url_part(value):
+    # keys and queries must not change the URL structure
+    return quote(value, safe="")
+
+
+def token_suffix():
+    return "/%s" % url_part(token) if token else ""
+
+
+def json_response(response):
+    try:
+        result = response.json()
+    except ValueError:
+        print("\u001b[31m[!] Invalid response from server\u001b[0m (HTTP %d): %s" % (response.status_code, response.text[:200]))
+        sys.exit(1)
+    if response.status_code >= 400 and not (isinstance(result, dict) and "reason" in result):
+        print("\u001b[31m[!] Server returned HTTP %d\u001b[0m" % response.status_code)
+        sys.exit(1)
+    return result
+
+
 def update_remote_bib(key, new_entry):
-    response = requests.put(server + "entry/%s" % key, json = {"entry": new_entry, "token": token})
-    if "success" in response.json() and not response.json()["success"]:
-        show_error(response.json())
+    result = json_response(requests.put(server + "entry/%s" % url_part(key), json = {"entry": new_entry, "token": token}))
+    if "success" in result and not result["success"]:
+        show_error(result)
 
 def add_remote_bib(key, entry, force=False):
     if force:
         # do not rely on boolean encoding of `force`
-        response = requests.post(server + "entry/%s" % key, json = {"entry": entry, "token": token, "force": "true"})
+        response = requests.post(server + "entry/%s" % url_part(key), json = {"entry": entry, "token": token, "force": "true"})
     else:
-        response = requests.post(server + "entry/%s" % key, json = {"entry": entry, "token": token})
-    if "success" in response.json() and not response.json()["success"]:
-        show_error(response.json())
+        response = requests.post(server + "entry/%s" % url_part(key), json = {"entry": entry, "token": token})
+    result = json_response(response)
+    if "success" in result and not result["success"]:
+        show_error(result)
 
 def remove_remote_bib(key):
-    response = requests.delete(server + "entry/%s%s" % (key, "/%s" % token if token else ""))
-    if "success" in response.json() and not response.json()["success"]:
-        show_error(response.json())
+    result = json_response(requests.delete(server + "entry/%s%s" % (url_part(key), token_suffix())))
+    if "success" in result and not result["success"]:
+        show_error(result)
 
 
 def remove_local_bib(key):
-    for (idx, entry) in enumerate(bib_database.entries):
-        if entry["ID"] == key:
-            del bib_database.entries[idx]
-            save_bib()
+    bib_database.entries = [e for e in bib_database.entries if e["ID"] != key]
+    save_bib()
 
 
 def save_bib_hash():
@@ -300,6 +354,8 @@ def show_error(obj):
         elif obj["reason"] == "policy":
             for entry in obj["entries"]:
                 print("\u001b[31m[!] Server policy rejected entry %s\u001b[0m. Reason: %s" % (entry["ID"], entry["reason"]))
+        elif obj["reason"] == "invalid_entry":
+            print("\u001b[31m[!] Server rejected malformed entry:\u001b[0m %s Fix it in main.bib and run again." % obj.get("message", ""))
         else:
             print("\u001b[31m[!] Unhandled error occurred!\u001b[0m Reason (%s) %s" % (obj["reason"], obj["message"] if "message" in obj else ""))
     else:
@@ -318,31 +374,77 @@ else:
         print(e)
         sys.exit(1)
 
-response = requests.get(server + "version")
+def self_update(version_info):
+    url = version_info.get("url", "client.py")
+    if not isinstance(url, str) or not re.match(r"^[A-Za-z0-9_\-][A-Za-z0-9_\-./]*$", url) or ".." in url:
+        print("\u001b[31m[!] Server sent an invalid update URL, not updating.\u001b[0m")
+        return False
+    if urlparse(server).scheme != "https":
+        print("\u001b[33m[!] New client version available, but the server is not using HTTPS.\u001b[0m "
+              "Not updating automatically, please download %s%s manually and verify it." % (server, url))
+        return False
+    print("[!] New version available, updating...")
+    try:
+        script = requests.get(server + url, timeout=30)
+    except requests.RequestException as e:
+        print("\u001b[31m[!] Could not download update:\u001b[0m %s" % e)
+        return False
+    if script.status_code != 200:
+        print("\u001b[31m[!] Could not download update\u001b[0m (HTTP %d)" % script.status_code)
+        return False
+    code = script.text
+    # make sure we got a valid client of the announced version before replacing ourselves
+    try:
+        compile(code, "client.py", "exec")
+    except SyntaxError:
+        print("\u001b[31m[!] Downloaded update is not valid Python, not updating.\u001b[0m")
+        return False
+    if not re.search(r"^version = %d$" % int(version_info["version"]), code, re.MULTILINE):
+        print("\u001b[31m[!] Downloaded update has an unexpected version, not updating.\u001b[0m")
+        return False
+    target = os.path.realpath(sys.argv[0])
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(target), suffix=".py")
+    try:
+        with os.fdopen(fd, "w") as sc:
+            sc.write(code)
+        try:
+            os.chmod(tmp, os.stat(target).st_mode)
+        except OSError:
+            pass
+        os.replace(tmp, target)
+    except OSError as e:
+        print("\u001b[31m[!] Could not write update:\u001b[0m %s" % e)
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        return False
+    return True
+
+
 try:
+    response = requests.get(server + "version")
     version_info = response.json()
-except:
+    int(version_info["version"])
+except Exception:
     print("\u001b[31m[!] Could not get version info from server.\u001b[0m Is the server URL \"%s\" correct?" % server)
     sys.exit(1)
 
-if version_info["version"] > version:
-    print("[!] New version available, updating...")
-    script = requests.get(server + version_info["url"])
-    with open(sys.argv[0], "w") as sc:
-        sc.write(script.text)
-    print("Restarting...")
-    os.execl(sys.executable, *([sys.executable]+sys.argv))
+if int(version_info["version"]) > version:
+    if self_update(version_info):
+        print("Restarting...")
+        os.execl(sys.executable, *([sys.executable]+sys.argv))
 
 
 if action == "search":
     if len(args.query) < 3:
         print("Usage: %s search --query <query>" % sys.argv[0])
         sys.exit(1)
-    response = requests.get(server + "search/" + args.query + ("/%s" % token if token else ""))
+    response = requests.get(server + "search/" + url_part(args.query) + token_suffix())
     print(response.text)
 
 elif action == "sync":
-    response = requests.get(server + "sync")
+    response = requests.get(server + "sync" + token_suffix())
     print(response.text)
 
 elif action == "get":
@@ -364,8 +466,7 @@ elif action == "get":
 
     # update
     if update:
-        response = requests.post(server + "update", json = {"entries": bib_database.entries, "token": token})
-        result = response.json()
+        result = json_response(requests.post(server + "update", json = {"entries": bib_database.entries, "token": token}))
         if not result["success"]:
             if result["reason"] == "policy":
                 #print(result["entries"])
@@ -418,11 +519,12 @@ elif action == "get":
                             update_remote_bib(dup[2]["ID"], entry_by_key(dup[1]))
             else:
                 show_error(result)
+        # local changes were handled, remember the state of main.bib
+        save_bib_hash()
 
     if fetch:
-        response = requests.post(server + "get_json", json = {"entries": keys, "token": token})
-        bib = response.json()
-        if "success" in bib and not bib["success"]:
+        bib = json_response(requests.post(server + "get_json", json = {"entries": keys, "token": token}))
+        if isinstance(bib, dict) and "success" in bib and not bib["success"]:
             show_error(bib)
         else:
             # merge local and remote database
@@ -430,12 +532,12 @@ elif action == "get":
                 if entry and "ID" in entry and not entry_by_key(entry["ID"]):
                     bib_database.entries.append(entry)
             save_bib()
+            save_keys_hash(keys)
 
             # suggest keys for unresolved keys
             for key in keys:
                 if not entry_by_key(key) and not '#' in key:
-                    response = requests.get(server + "suggest/" + key + ("/%s" % (token if token else "")))
-                    suggest = response.json()
+                    suggest = json_response(requests.get(server + "suggest/" + url_part(key) + token_suffix()))
                     if "success" in suggest and not suggest["success"]:
                         show_error(suggest)
                     else:

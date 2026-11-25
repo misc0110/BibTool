@@ -56,7 +56,12 @@ A webhook ensures that manual edits of the bibliography file and authentication-
 
 ### Webhook
 To allow manual changes to the bibliography file or the authentication tokens without having to restart the server, it is necessary to configure a webhook. 
-The webhook has to send a notification to `<your bib server>/v1/webhook` on push events. There is no secret token required. 
+The webhook has to send a notification to `<your bib server>/v1/webhook` on push events. 
+Optionally, the webhook can be protected with a secret: set the environment variable `BIBTOOL_WEBHOOK_SECRET` on the server (e.g., in the `.env` file next to `docker-compose.yml`) and configure the same value as the webhook secret in GitLab (`X-Gitlab-Token`), GitHub (signed with `X-Hub-Signature-256`), Gitea, or Gogs. 
+Without `BIBTOOL_WEBHOOK_SECRET`, the webhook accepts requests without a secret. 
+Alternatively, a client with a `write` token can trigger a sync with `python3 client.py sync --server <your bib server>`. 
+
+If `tokens.json` does not exist when the server starts, token checks are disabled. If it disappears while the server is running, the previously loaded tokens stay active; restart the server to disable token checks. 
 
 ### Policy
 The tool allows defining a policy for bibliography entries. 
@@ -98,3 +103,4 @@ Note that each query has to be at least 3 characters long.
 
 ## Automatically Update
 The client supports automated updates. If the version number of the client is lower than the one provided by the server, the client automatically fetches the new client from the server and restarts itself. 
+Automatic updates are only performed if the server is accessed via HTTPS. Otherwise, the client prints a notice and the new client has to be downloaded manually from `<your bib server>/v1/client.py`. 
