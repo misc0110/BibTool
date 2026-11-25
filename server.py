@@ -52,7 +52,7 @@ else:
             key = field.key.lower()
             key = _FIELD_ALIASES.get(key, key)
             value = field.value if isinstance(field.value, str) else str(field.value)
-            if field.enclosing == "no-enclosing" and value.lower() in _COMMON_STRINGS:
+            if getattr(field, "enclosing", None) == "no-enclosing" and value.lower() in _COMMON_STRINGS:
                 value = _COMMON_STRINGS[value.lower()]
             entry[key] = value
         entry["ENTRYTYPE"] = block.entry_type.lower()
@@ -65,7 +65,10 @@ else:
     def _make_field(key, value):
         # write months as BibTeX month macros (month = jan) instead of {January}
         if key == "month" and isinstance(value, str) and value.strip().lower() in _MONTH_MACROS:
-            return Field(key, _MONTH_MACROS[value.strip().lower()], enclosing="no-enclosing")
+            try:
+                return Field(key, _MONTH_MACROS[value.strip().lower()], enclosing="no-enclosing")
+            except TypeError:
+                pass  # older bibtexparser 2 betas cannot write macros, keep the braces
         return Field(key, value)
 
     def _dict_to_entry(entry):
@@ -106,10 +109,12 @@ def bib_load(path):
 
 
 def bib_dump(bib_db, path):
+    # serialize before opening, opening truncates the file
+    content = bib_dumps(bib_db)
     with open(path, "w", encoding="utf-8") as bibtex_file:
-        bibtex_file.write(bib_dumps(bib_db))
+        bibtex_file.write(content)
 
-VERSION = 17
+VERSION = 18
 
 app = Flask(__name__)
 tokens = True

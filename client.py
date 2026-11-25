@@ -51,7 +51,7 @@ else:
             key = field.key.lower()
             key = _FIELD_ALIASES.get(key, key)
             value = field.value if isinstance(field.value, str) else str(field.value)
-            if field.enclosing == "no-enclosing" and value.lower() in _COMMON_STRINGS:
+            if getattr(field, "enclosing", None) == "no-enclosing" and value.lower() in _COMMON_STRINGS:
                 value = _COMMON_STRINGS[value.lower()]
             entry[key] = value
         entry["ENTRYTYPE"] = block.entry_type.lower()
@@ -64,7 +64,10 @@ else:
     def _make_field(key, value):
         # write months as BibTeX month macros (month = jan) instead of {January}
         if key == "month" and isinstance(value, str) and value.strip().lower() in _MONTH_MACROS:
-            return Field(key, _MONTH_MACROS[value.strip().lower()], enclosing="no-enclosing")
+            try:
+                return Field(key, _MONTH_MACROS[value.strip().lower()], enclosing="no-enclosing")
+            except TypeError:
+                pass  # older bibtexparser 2 betas cannot write macros, keep the braces
         return Field(key, value)
 
     def _dict_to_entry(entry):
@@ -105,10 +108,12 @@ def bib_load(path):
 
 
 def bib_dump(bib_db, path):
+    # serialize before opening, opening truncates the file
+    content = bib_dumps(bib_db)
     with open(path, "w", encoding="utf-8") as bibtex_file:
-        bibtex_file.write(bib_dumps(bib_db))
+        bibtex_file.write(content)
 
-version = 17
+version = 18
 
 limit_traffic = True
 
@@ -155,8 +160,9 @@ def get_keys(filename, import_base=None, visited=None):
         if real in visited:
             return []
         visited.add(real)
-        content = open(filename).read()
-    except:
+        content = open(filename, encoding="utf-8", errors="replace").read()
+    except OSError as e:
+        print("Warning: could not read '%s': %s" % (filename, e.strerror))
         return []
 
     content = COMMENT_RE.sub("", content)
@@ -344,7 +350,6 @@ def save_bib_hash():
 
 def save_bib():
     bib_dump(bib_database, 'main.bib')
-    save_bib_hash()
 
 
 def show_error(obj):
@@ -449,7 +454,10 @@ elif action == "sync":
 
 elif action == "get":
     keys = get_keys(args.tex)
-    fetch = keys_have_changed(keys)
+    if not keys:
+        print("Warning: no citations found in '%s'" % args.tex)
+    # also fetch if a cited entry is missing locally, regardless of the stored hashes
+    fetch = keys_have_changed(keys) or any(not entry_by_key(k) for k in keys if '#' not in k)
     try:
         current_bib = open("main.bib").read()
         update = bib_has_changed(current_bib)
@@ -519,8 +527,6 @@ elif action == "get":
                             update_remote_bib(dup[2]["ID"], entry_by_key(dup[1]))
             else:
                 show_error(result)
-        # local changes were handled, remember the state of main.bib
-        save_bib_hash()
 
     if fetch:
         bib = json_response(requests.post(server + "get_json", json = {"entries": keys, "token": token}))
@@ -532,6 +538,8 @@ elif action == "get":
                 if entry and "ID" in entry and not entry_by_key(entry["ID"]):
                     bib_database.entries.append(entry)
             save_bib()
+            # only remember this state after everything succeeded
+            save_bib_hash()
             save_keys_hash(keys)
 
             # suggest keys for unresolved keys
